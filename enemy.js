@@ -2,7 +2,7 @@
 import { rooms, TILE, isWalkableWorld, COLS, ROWS } from './map.js';
 import { player } from './player.js';
 import { particles } from './particles.js';
-import { STAGE_MONSTERS, BOSSES, BOSS_TIME } from './defs.js';
+import { STAGE_MONSTERS, STAGE_BOSSES } from './defs.js';
 
 export const enemies = [];
 export const enemyProjectiles = [];
@@ -13,11 +13,35 @@ const ATK_RANGE = 30;
 const ATK_CD = 1.0;
 
 let currentStage = 'forest';
+let currentDifficulty = 1;
 let bossSpawned = false;
-export function setStage(stage) { currentStage = stage; bossSpawned = false; }
+export function setStage(stage, difficulty = 1) {
+  currentStage = stage;
+  currentDifficulty = Math.max(1, Math.min(5, difficulty));
+  bossSpawned = false;
+}
 
 let spawnTimer = 0;
-const SPAWN_INTERVAL = 2.0; // 2초마다 스폰
+function getDifficultyStats(gameTime = 0) {
+  let difficultyStep = currentDifficulty - 1;
+  let stageStep = currentStage === 'volcano' ? 2 : currentStage === 'dungeon' ? 1 : 0;
+  let timeScale = 1 + Math.min(gameTime, 60) / 60 * 0.45;
+  return {
+    hp: (1 + difficultyStep * 0.28 + stageStep * 0.12) * timeScale,
+    atk: 1.45 * (1 + difficultyStep * 0.16 + stageStep * 0.1) * timeScale,
+    speed: 1 + difficultyStep * 0.035 + stageStep * 0.025,
+    spawnInterval: Math.max(0.8, 2 - difficultyStep * 0.2 - stageStep * 0.08),
+    waveCount: 3 + difficultyStep + stageStep,
+    maxEnemies: 45 + currentDifficulty * 10,
+  };
+}
+
+function getMonsterPool(gameTime) {
+  let stage = STAGE_MONSTERS[currentStage] || STAGE_MONSTERS.forest;
+  if (gameTime >= 40) return [...stage.mid, ...stage.late];
+  if (gameTime >= 20) return [...stage.early, ...stage.mid];
+  return stage.early;
+}
 
 export function spawnEnemies() {
   enemies.length = 0;
@@ -30,43 +54,52 @@ export function spawnBoss() {
   bossSpawned = true;
   enemies.length = 0;
   enemyProjectiles.length = 0;
-  let bossName = BOSSES[Math.floor(Math.random()*BOSSES.length)];
+  let bossPool = STAGE_BOSSES[currentStage] || STAGE_BOSSES.forest;
+  let bossTier = Math.min(2, Math.floor((currentDifficulty - 1) * 3 / 5));
+  let bossName = bossPool[bossTier];
+  let stats = getDifficultyStats(60);
+  let stageScale = currentStage === 'volcano' ? 1.5 : currentStage === 'dungeon' ? 1.25 : 1;
+  let sourceFrameSize = Number(bossName.slice(-3)) >= 117 ? 64 : 32;
+  let maxHp = Math.round(1000 * stats.hp * stageScale);
   let angle = Math.random() * Math.PI * 2;
   enemies.push({
     x: player.x + Math.cos(angle)*300,
     y: player.y + Math.sin(angle)*300,
-    radius: 40, hp: 1000, maxHp: 1000,
-    atk: 20, speed: 30,
+    radius: 40, hp: maxHp, maxHp,
+    atk: Math.round(20 * stats.atk * stageScale),
+    speed: 30 * stats.speed,
     state: 'chase', homeX: 0, homeY: 0,
     patrolTarget: null, atkCooldown: 0, flash: 0,
     color: '#f0f',
-    spriteType: `assets/boss/${bossName}/sheet.png`,
-    animOffset: 0, isBoss: true, bossFrameSize: 32,
+    spriteType: `assets/boss-scalefx/${bossName}/sheet.png`,
+    animOffset: 0, isBoss: true, bossFrameSize: sourceFrameSize * 2,
   });
 }
 
-function spawnWave() {
-  let count = 3 + Math.floor(Math.random() * 3);
+function spawnWave(gameTime) {
+  let stats = getDifficultyStats(gameTime);
+  let availableSlots = stats.maxEnemies - enemies.filter(e => e.hp > 0).length;
+  let count = Math.min(availableSlots, stats.waveCount + Math.floor(Math.random() * 3));
+  let pool = getMonsterPool(gameTime);
   for (let i = 0; i < count; i++) {
     let angle = Math.random() * Math.PI * 2;
     let dist = 550 + Math.random() * 150;
     let ex = player.x + Math.cos(angle) * dist;
     let ey = player.y + Math.sin(angle) * dist;
     if (!isWalkableWorld(ex, ey)) continue;
-    let pool = STAGE_MONSTERS[currentStage] || STAGE_MONSTERS.forest;
     let monName = pool[Math.floor(Math.random()*pool.length)];
     // 10% 확률로 엘리트
     let isElite = Math.random() < 0.03;
     enemies.push({
       x: ex, y: ey, radius: isElite ? 28 : 14,
-      hp: isElite ? 100 : 15 + Math.floor(Math.random()*10),
-      maxHp: isElite ? 100 : 25,
-      atk: isElite ? 8 : 3 + Math.floor(Math.random()*2),
-      speed: isElite ? 35 : 50 + Math.random()*30,
+      hp: Math.round((isElite ? 100 : 15 + Math.floor(Math.random()*10)) * stats.hp),
+      maxHp: 1,
+      atk: Math.round((isElite ? 8 : 3 + Math.floor(Math.random()*2)) * stats.atk),
+      speed: (isElite ? 35 : 50 + Math.random()*30) * stats.speed,
       state: 'chase', homeX: ex, homeY: ey,
       patrolTarget: null, atkCooldown: 0, flash: 0,
       color: `hsl(${Math.floor(Math.random()*360)},60%,50%)`,
-      spriteType: `assets/monster/${monName}/sheet.png`,
+      spriteType: `assets/monster-scalefx/${monName}/sheet.png`,
       animOffset: Math.floor(Math.random()*4),
       isElite,
     });
@@ -75,13 +108,14 @@ function spawnWave() {
   }
 }
 
-export function updateEnemies(dt) {
+export function updateEnemies(dt, gameTime = 0) {
   // 무한 스폰 (보스 나오면 중단)
   if (!bossSpawned) {
     spawnTimer += dt;
-    if (spawnTimer >= SPAWN_INTERVAL) {
-      spawnTimer -= SPAWN_INTERVAL;
-      spawnWave();
+    let spawnInterval = getDifficultyStats(gameTime).spawnInterval;
+    if (spawnTimer >= spawnInterval) {
+      spawnTimer -= spawnInterval;
+      spawnWave(gameTime);
     }
   }
 
@@ -164,7 +198,7 @@ function getSprite(path) {
   if (!spriteCache[path]) { let img = new Image(); img.src = path; spriteCache[path] = img; }
   return spriteCache[path];
 }
-const FRAME_W = 16, FRAME_H = 16;
+const FRAME_W = 32, FRAME_H = 32;
 
 function dirToRow4(dx, dy) {
   if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 2 : 1;

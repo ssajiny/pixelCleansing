@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width,initial-scale=1,user-scalable=no"
     />
-    <meta name="screen-orientation" content="landscape" />
+    <meta name="screen-orientation" content="portrait" />
     <title>Pixel Cleansing</title>
     <style>
       @font-face {
@@ -35,34 +35,9 @@
       canvas {
         display: block;
       }
-      #rotate-msg {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: #000;
-        color: #fff;
-        font-size: 18px;
-        align-items: center;
-        justify-content: center;
-        flex-direction: column;
-        z-index: 999;
-      }
-      #rotate-msg span {
-        font-size: 40px;
-        margin-bottom: 12px;
-      }
-      @media (orientation: portrait) {
-        #rotate-msg {
-          display: flex;
-        }
-        canvas {
-          display: none;
-        }
-      }
     </style>
   </head>
   <body>
-    <div id="rotate-msg">기기를 가로로 돌려주세요</div>
     <canvas id="c"></canvas>
     <script type="module" src="main.js"></script>
   </body>

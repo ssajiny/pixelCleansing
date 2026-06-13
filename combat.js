@@ -74,9 +74,15 @@ export function updateCombat(dt) {
   for (let i = xpGems.length-1; i >= 0; i--) {
     let g = xpGems[i];
     let dx = player.x - g.x, dy = player.y - g.y, d = Math.hypot(dx, dy);
-    if (player._magnetPull || d < magnetRange) {
-      let spd = player._magnetPull ? 500 : 300 * (1 - d/magnetRange);
-      if (d > 1) { g.x += (dx/d) * spd * dt; g.y += (dy/d) * spd * dt; }
+    if (player._magnetPull || d < magnetRange) g.attracted = true;
+    if (g.attracted) {
+      let baseSpeed = Math.max(420, player.speed * 2.5);
+      let speed = player._magnetPull ? baseSpeed * 1.5 : baseSpeed + Math.min(d * 2, 500);
+      let step = Math.min(d, speed * dt);
+      if (d > 0) {
+        g.x += (dx/d) * step;
+        g.y += (dy/d) * step;
+      }
     }
     if (d < 20) {
       gainXp(g.value);
@@ -88,6 +94,9 @@ export function updateCombat(dt) {
 }
 
 function onEnemyDeath(e) {
+  if (e.deathCounted) return;
+  e.deathCounted = true;
+  player.kills = (player.kills || 0) + 1;
   particles.push({ x:e.x, y:e.y, text:'💀', color:'#fff', life:0.5, vy:-30 });
   let xp = 5 + Math.floor(Math.random() * 5);
   xpGems.push({ x: e.x + (Math.random()-0.5)*10, y: e.y + (Math.random()-0.5)*10, value: Math.floor(xp * (player.xpMult||1)) });

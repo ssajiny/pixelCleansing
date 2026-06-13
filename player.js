@@ -1,6 +1,12 @@
 // player.js - 뱀서류 (조이스틱/WASD 이동 + 자동공격)
 import { isWalkableWorld } from './map.js';
 import { getJoystick, getKeys } from './input.js';
+import {
+  ANIMATION_FRAME_COUNTS,
+  getCharacterRenderProfile,
+  getCharacterSpriteLayout,
+  getCharacterSpritePath,
+} from './character-sprites.js';
 
 export const player = {
   x: 0, y: 0, radius: 14,
@@ -12,6 +18,7 @@ export const player = {
   facing: 0,
   level: 1, xp: 0, xpToNext: 20,
   gold: 0, // 영구 골드
+  kills: 0,
   state: 'idle',
   target: null,
   path: [],
@@ -89,19 +96,26 @@ const SKILL_POOL = [
 export function getRandomChoices(n) {
   let pool = SKILL_POOL.filter(sk => {
     let acq = player.acquired.find(a => a.id === sk.id);
-    return !acq || acq.count < (sk.maxLv || 10);
+    if (acq) return acq.count < (sk.maxLv || 10);
+    let isWeapon = isAttackSkill(sk);
+    let usedSlots = player.acquired.filter(a => a.isWeapon === isWeapon).length;
+    return usedSlots < 6;
   });
-  // 등급별 가중치: normal=10, rare=5, epic=2, legendary=1
-  const weights = { normal:10, rare:5, epic:2, legendary:1 };
   let choices = [];
   for (let i = 0; i < n && pool.length > 0; i++) {
-    let totalW = pool.reduce((s, sk) => s + (weights[sk.rarity]||10), 0);
-    let r = Math.random() * totalW;
-    let acc = 0;
-    for (let j = 0; j < pool.length; j++) {
-      acc += weights[pool[j].rarity] || 10;
-      if (r < acc) { choices.push(pool.splice(j, 1)[0]); break; }
-    }
+    let index = Math.floor(Math.random() * pool.length);
+    let skill = pool.splice(index, 1)[0];
+    let effectValue = rollEffectValue();
+    choices.push({
+      ...skill,
+      effectValue,
+      rarity: rarityForValue(effectValue),
+      rarityLabel: rarityLabelForValue(effectValue),
+      effectLabel: skill.id === 'amount'
+        ? `투사체 +${effectValue}`
+        : `효과 x${effectValue}`,
+      rolledDesc: `${skill.desc} · ${effectValue}단계 효과`,
+    });
   }
   return choices;
 }
@@ -110,20 +124,68 @@ export function selectChoice(idx) {
   if (!player.levelUpChoices) return;
   let choice = player.levelUpChoices[idx];
   if (choice) {
-    choice.apply();
-    // 무기/스킬은 최대 5개, 스탯은 최대 5개
-    let isWeapon = choice.type==='weapon'||choice.type==='melee'||choice.type==='special';
+    let isWeapon = isAttackSkill(choice);
     let existing = player.acquired.find(a=>a.id===choice.id);
-    if (existing) { existing.count++; }
+    let hasRoom = player.acquired.filter(a=>a.isWeapon===isWeapon).length < 6;
+    if (!existing && !hasRoom) return;
+
+    let effectValue = choice.effectValue || 1;
+    for (let i = 0; i < effectValue; i++) choice.apply();
+
+    if (existing) {
+      existing.count++;
+      existing.power = (existing.power || 0) + effectValue;
+      if (rarityRank(choice.rarity) > rarityRank(existing.rarity)) {
+        existing.rarity = choice.rarity;
+      }
+    }
     else {
-      let weapons = player.acquired.filter(a=>a.isWeapon).length;
-      let buffs = player.acquired.filter(a=>!a.isWeapon).length;
-      if ((isWeapon && weapons < 5) || (!isWeapon && buffs < 5))
-        player.acquired.push({ id:choice.id, name:choice.name, type:choice.type, isWeapon, count:1 });
+      player.acquired.push({
+        id:choice.id,
+        name:choice.name,
+        type:choice.type,
+        isWeapon,
+        count:1,
+        power:effectValue,
+        rarity:choice.rarity,
+      });
     }
   }
   player.levelUpChoices = null;
   player.paused = false;
+}
+
+function isAttackSkill(skill) {
+  return skill.type === 'weapon' || skill.type === 'melee' || skill.type === 'special';
+}
+
+function rollEffectValue() {
+  let roll = Math.random();
+  if (roll < 0.42) return 1;
+  if (roll < 0.7) return 2;
+  if (roll < 0.87) return 3;
+  if (roll < 0.96) return 4;
+  return 5;
+}
+
+function rarityForValue(value) {
+  if (value >= 5) return 'legendary';
+  if (value >= 3) return 'epic';
+  if (value >= 2) return 'rare';
+  return 'normal';
+}
+
+function rarityLabelForValue(value) {
+  return {
+    normal: '노말',
+    rare: '레어',
+    epic: '에픽',
+    legendary: '전설',
+  }[rarityForValue(value)];
+}
+
+function rarityRank(rarity) {
+  return { normal:0, rare:1, epic:2, legendary:3 }[rarity] || 0;
 }
 
 export function updatePlayer(dt) {
@@ -186,17 +248,28 @@ export function updatePlayer(dt) {
 const charSprites = {};
 function loadCharSprite(name, anim) {
   let key = `${name}-${anim}`;
-  if (!charSprites[key]) { let img = new Image(); img.src = `assets/character/${name}/${name}/${name}-${anim}.png`; charSprites[key] = img; }
+  if (!charSprites[key]) {
+    let img = new Image();
+    img.src = getCharacterSpritePath(name, anim);
+    charSprites[key] = img;
+  }
   return charSprites[key];
 }
 // 선택된 캐릭터 미리 로드
 export function preloadCharSprites(name) {
   ['Idle','Walk','Hurt','Death'].forEach(a => loadCharSprite(name, a));
 }
-const CHAR_FRAME = 100;
 let charAnim = 'Idle', charFrame = 0, charTick = 0;
 let prevMoving = false;
 let hurtTimer = 0;
+
+export function resetPlayerAnimation() {
+  charAnim = 'Idle';
+  charFrame = 0;
+  charTick = 0;
+  prevMoving = false;
+  hurtTimer = 0;
+}
 
 export function drawPlayer(ctx) {
   // Hurt 타이머
@@ -220,30 +293,44 @@ export function drawPlayer(ctx) {
   // 프레임 진행
   charTick++;
   if (charTick >= 8) { charTick = 0; charFrame++; }
-  let maxFrames = charAnim === 'Walk' ? 8 : charAnim === 'Idle' ? 6 : charAnim === 'Hurt' ? 5 : 4;
+  let charName = player.selectedChar || 'Archer';
+  let img = loadCharSprite(charName, charAnim);
+  let layout = getCharacterSpriteLayout(charName);
+  let render = getCharacterRenderProfile(charName);
+  let maxFrames = img.naturalWidth
+    ? Math.floor(img.naturalWidth / layout.frameStep)
+    : ANIMATION_FRAME_COUNTS[charAnim];
   if (charFrame >= maxFrames) charFrame = (charAnim === 'Death') ? maxFrames-1 : 0;
 
   prevMoving = moving;
 
-  // 선택된 캐릭터 이름
-  let charName = player.selectedChar || 'Swordsman';
-  let img = loadCharSprite(charName, charAnim);
-
-  let sz = 110;
+  let sz = render.drawSize;
+  let footY = player.y + 20;
+  let drawTop = footY - sz * render.footRatio;
   if (img.complete && img.naturalWidth) {
     ctx.globalAlpha = player.flash > 0 ? 0.5 : 1;
     let flipX = player.facing > Math.PI/2 || player.facing < -Math.PI/2;
     ctx.save();
-    ctx.translate(player.x, player.y);
+    ctx.translate(player.x, 0);
     if (flipX) ctx.scale(-1, 1);
-    ctx.drawImage(img, charFrame*CHAR_FRAME + 25, 15, 50, 50, -sz/2, -sz/2, sz, sz);
+    ctx.drawImage(
+      img,
+      charFrame * layout.frameStep + layout.sourceX,
+      layout.sourceY,
+      layout.sourceSize,
+      layout.sourceSize,
+      -sz/2,
+      drawTop,
+      sz,
+      sz,
+    );
     ctx.restore();
     ctx.globalAlpha = 1;
   }
 
   // HP바 (캐릭터 아래)
   let bw = 36, bh = 4;
-  let bx = player.x - bw/2, by = player.y + sz/2 + 2;
+  let bx = player.x - bw/2, by = footY + 6;
   ctx.fillStyle = '#300'; ctx.fillRect(bx, by, bw, bh);
   ctx.fillStyle = '#4f4'; ctx.fillRect(bx, by, bw * (player.hp / player.maxHp), bh);
   // 쉴드바

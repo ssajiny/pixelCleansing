@@ -1,15 +1,16 @@
 // game.js - 게임 상태 + 루프
 import { generateMap, getSpawn, drawMap, MAP_W, MAP_H } from './map.js';
-import { player, updatePlayer, drawPlayer, setEnemiesRef, preloadCharSprites } from './player.js';
+import { player, updatePlayer, drawPlayer, setEnemiesRef, preloadCharSprites, resetPlayerAnimation } from './player.js';
 import { spawnEnemies, updateEnemies, drawEnemies, enemies, enemyProjectiles, setStage, spawnBoss } from './enemy.js';
 import { updateCombat, drawCombat, projectiles, xpGems, chests, pickups } from './combat.js';
 import { drawHUD, handleLevelUpClick } from './hud.js';
 import { particles, updateParticles, drawParticles } from './particles.js';
 import { drawMenu, handleMenuClick, resetMenu, getSelectedChar } from './menu.js';
-import { CHARACTER_DEFS } from './defs.js';
+import { BOSS_TIME, CHARACTER_DEFS } from './defs.js';
+import { getCharacterRenderProfile } from './character-sprites.js';
 
-export const GAME_W = 960;
-let GAME_H = 540;
+export const GAME_W = 540;
+let GAME_H = 960;
 export function setGameH(h) { GAME_H = h; }
 export function getGameH() { return GAME_H; }
 
@@ -22,7 +23,10 @@ export function goToMenu() { phase = 'menu'; resetMenu(); }
 
 export function handleMenuInput(gx, gy) {
   let result = handleMenuClick(gx, gy, GAME_W, GAME_H);
-  if (result && result.stage) { setStage(result.stage.id); startGame(); }
+  if (result && result.stage) {
+    setStage(result.stage.id, result.diff);
+    startGame();
+  }
 }
 
 export function startGame() {
@@ -38,7 +42,7 @@ export function startGame() {
   gameTime = 0;
   let sp = getSpawn();
   player.x = sp.x; player.y = sp.y;
-  player.level = 1; player.xp = 0; player.xpToNext = 20;
+  player.level = 1; player.xp = 0; player.xpToNext = 20; player.kills = 0;
   player.projCount = 1; player.pierce = false; player.aoe = 0; player.regen = 0;
   player.orbitCount = 0; player.lightning = 0; player.thorns = 0;
   player.projSpeed = 0; player.projSize = 0; player.critChance = 15;
@@ -53,12 +57,16 @@ export function startGame() {
   player.acquired = [];
   player._lightningTimer = 0;
   player.path = []; player.target = null; player.state = 'idle';
+  player.flash = 0; player.atkCooldown = 0; player.facing = 0;
   player.selectedChar = getSelectedChar();
-  let charDef = CHARACTER_DEFS[player.selectedChar] || CHARACTER_DEFS['Swordsman'];
+  let charDef = CHARACTER_DEFS[player.selectedChar] || CHARACTER_DEFS['Archer'];
+  let renderProfile = getCharacterRenderProfile(player.selectedChar);
+  player.radius = renderProfile.radius;
   player.maxHp = charDef.hp; player.hp = charDef.hp;
   player.atk = charDef.atk; player.def = charDef.def;
   player.speed = charDef.speed; player.atkSpeed = charDef.atkSpeed;
   player.atkRange = charDef.atkRange;
+  resetPlayerAnimation();
   preloadCharSprites(player.selectedChar);
   spawnEnemies();
   setEnemiesRef(enemies);
@@ -71,7 +79,7 @@ export function update(dt) {
   if (player.paused) return;
   gameTime += dt;
   if (player.hp <= 0) { phase = 'gameover'; return; }
-  if (gameTime >= 600 ) spawnBoss();
+  if (gameTime >= BOSS_TIME) spawnBoss();
   let atkResult = updatePlayer(dt);
   // 자동공격 투사체
   if (atkResult && atkResult.attack) {
@@ -90,7 +98,7 @@ export function update(dt) {
       projectiles.push({ x:player.x, y:player.y, vx:Math.cos(angle)*spd, vy:Math.sin(angle)*spd, dmg, radius:size, life, color:'#5f5', isCrit:crit, pierce:player.pierce||false, aoe:player.aoe||0 });
     }
   }
-  updateEnemies(dt);
+  updateEnemies(dt, gameTime);
   updateCombat(dt);
   updateParticles(dt);
 

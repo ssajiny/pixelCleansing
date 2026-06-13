@@ -4,11 +4,34 @@ import { enemies } from './enemy.js';
 import { getGameH } from './game.js';
 import { toggleFullMap, isFullMapOpen } from './hud.js';
 
-const GAME_W = 960;
+const GAME_W = 540;
 
 // === 조이스틱 (화면 어디서든 터치=이동) ===
 const joystick = { active: false, id: -1, cx: 0, cy: 0, dx: 0, dy: 0 };
 export function getJoystick() { return joystick; }
+
+export function drawJoystick(ctx) {
+  if (!joystick.active) return;
+  ctx.save();
+  ctx.globalAlpha = 0.78;
+  ctx.fillStyle = 'rgba(30,34,47,0.34)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(joystick.cx, joystick.cy, JOY_MAX, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = '#303646';
+  ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(joystick.cx + joystick.dx, joystick.cy + joystick.dy, 30, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
 
 const JOY_MAX = 60;
 const touches = {};
